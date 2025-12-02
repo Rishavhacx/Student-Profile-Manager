@@ -21,17 +21,9 @@ public class FileSearchAPI
 
     [Function("SearchStudentProfile")]
     public async Task<HttpResponseData> RunAsync(
-     [HttpTrigger(AuthorizationLevel.Anonymous, "get", Route = "students/{id}")] HttpRequestData req, FunctionContext context)
-    {
-        var id = context.BindingContext.BindingData["id"]?.ToString();
-        if (string.IsNullOrEmpty(id))
-        {
-            var badResponse = req.CreateResponse(HttpStatusCode.BadRequest);
-            await badResponse.WriteStringAsync("Student id is required.");
-            return badResponse;
-        }
-
-
+     [HttpTrigger(AuthorizationLevel.Anonymous, "get", Route = "students/{id?}")] HttpRequestData req,
+      FunctionContext context)
+    {   
         var client = new CosmosClient(
             Environment.GetEnvironmentVariable("CosmosDbEndpoint"),
             Environment.GetEnvironmentVariable("CosmosDbKey")
@@ -40,11 +32,38 @@ public class FileSearchAPI
             Environment.GetEnvironmentVariable("CosmosDbDatabaseName"),
             Environment.GetEnvironmentVariable("CosmosDbContainerName")
         );
-
-        try
+        
+        string id = null;
+        
+        if (context.BindingContext.BindingData.TryGetValue("id", out var idValue))
         {
+            id = idValue?.ToString();
+        }
+
+
+
+        if (string.IsNullOrEmpty(id))
+        {
+            // Return all students
+            var query = new QueryDefinition("SELECT * FROM c");
+            var iterator = container.GetItemQueryIterator<StudentProfile>(query);
+
+            var students = new List<StudentProfile>();
+            while (iterator.HasMoreResults)
+            {
+                var results = await iterator.ReadNextAsync();
+                students.AddRange(results);
+            }
+
+            var okResponse = req.CreateResponse(HttpStatusCode.OK);
+            await okResponse.WriteAsJsonAsync(students);
+            return okResponse;
+        }
+        else
+        {
+            // Return single student
             var query = new QueryDefinition("SELECT * FROM c WHERE c.id = @id")
-            .WithParameter("@id", id);
+                .WithParameter("@id", id);
 
             var iterator = container.GetItemQueryIterator<StudentProfile>(query);
             var results = await iterator.ReadNextAsync();
@@ -61,13 +80,6 @@ public class FileSearchAPI
             await okResponse.WriteAsJsonAsync(student);
             return okResponse;
         }
-        catch (CosmosException ex) when (ex.StatusCode == HttpStatusCode.NotFound)
-        {
-            var notFound = req.CreateResponse(HttpStatusCode.NotFound);
-            await notFound.WriteStringAsync("Student profile not found.");
-            return notFound;
-        }
-
 
     }
 }
